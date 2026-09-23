@@ -129,6 +129,21 @@
     <div style="border-top:1px solid var(--line); padding-top:10px">
       <label>Agent ID</label><input id="f_agent" value="agent_2101m36d5k20fdk8vbm5843xgh1f">
     </div>
+    <div style="border-top:1px solid var(--line); padding-top:10px">
+      <label>아바타 얼굴 (Simli)</label>
+      <select id="f_face">
+        <option value="cace3ef7-a4c4-425d-a8cf-a5358eb0c427" selected>Tina</option>
+        <option value="d2a5c7c6-fed9-4f55-bcb3-062f7cd20103">Kate</option>
+        <option value="5fc23ea5-8175-4a82-aaaf-cdd8c88543dc">Madison</option>
+        <option value="b1f6ad8f-ed78-430b-85ef-2ec672728104">Charlotte</option>
+        <option value="b9e5fba3-071a-4e35-896e-211c4d6eaa7b">Laila</option>
+        <option value="afdb6a3e-3939-40aa-92df-01604c23101c">Zahra</option>
+      </select>
+    </div>
+    <div><label>Simli API Key (이 브라우저에만 저장)</label><input id="f_simli" type="password" placeholder="없으면 아바타 없이 음성만"></div>
+    <label style="display:flex;align-items:center;gap:7px;color:var(--tx);font-size:12px;margin:0">
+      <input type="checkbox" id="f_avatar" style="width:auto" checked> 아바타 사용
+    </label>
     <label style="display:flex;align-items:center;gap:7px;color:var(--tx);font-size:12px;margin:0">
       <input type="checkbox" id="f_textonly" style="width:auto"> 텍스트 모드 (마이크 없이 테스트)
     </label>
@@ -141,6 +156,11 @@
   <div id="stage">
     <div id="phaseTag">PHASE 0 · 대기</div>
     <div id="clock">00:00</div>
+    <div id="avBox" style="display:none">
+      <video id="av" autoplay playsinline muted></video>
+      <audio id="avAudio" autoplay></audio>
+      <div id="avState">아바타 연결 중…</div>
+    </div>
     <div id="stageBody">
       <h1 class="big">🎧</h1>
       <p class="sub">왼쪽에서 학생 정보를 넣고 세션을 시작하세요.</p>
@@ -164,7 +184,17 @@
   </div>
 </div>
 
+<style>
+  #avBox{position:relative;width:300px;height:300px;border-radius:22px;overflow:hidden;
+         border:1px solid var(--line);background:#0b0d12;flex-shrink:0;box-shadow:0 14px 40px rgba(0,0,0,.45)}
+  #avBox.talking{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(0,206,201,.25),0 14px 40px rgba(0,0,0,.45)}
+  #av{width:100%;height:100%;object-fit:cover;display:block}
+  #avState{position:absolute;inset:auto 0 10px 0;text-align:center;font-size:11px;color:var(--dim)}
+  #avBox.live #avState{display:none}
+</style>
 <script src="https://unpkg.com/@elevenlabs/client@1.25.0/dist/lib.iife.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.15.15/dist/livekit-client.umd.js"></script>
+<script src="simli.bundle.js"></script>
 <script>
 (function(){
   const { Conversation } = window.ElevenLabsClient;
@@ -343,12 +373,20 @@
                 $('sdot').className='statusdot'; $('sTx').textContent='마이크 거부'; return; }
     }
 
+    // Avatar first, so the face is ready before the tutor's first words.
+    const useAvatar = $('f_avatar').checked && !!$('f_simli').value.trim();
+    if(useAvatar){ await startSimli(); }
+    else { $('avBox').style.display='none'; }
+
     try{
       conv = await Conversation.startSession({
         agentId: $('f_agent').value.trim(),
         textOnly,
-        connectionType: textOnly ? 'websocket' : 'webrtc',
+        // Avatar needs raw 16 kHz PCM, which the websocket transport delivers.
+        connectionType: (textOnly || simli) ? 'websocket' : 'webrtc',
         dynamicVariables: v,
+        onAudio: (b64)=>{ if(simli){ try{ simli.sendAudioData(b64ToU8(b64)); }catch(e){} } },
+        onInterruption: ()=>{ if(simli){ try{ simli.ClearBuffer(); }catch(e){} } },
         onConnect: ()=>{
           phase=1; renderStage(); startClock();
           $('sdot').className='statusdot on'; $('sTx').textContent = textOnly?'연결됨 (텍스트)':'연결됨 (음성)';
@@ -381,7 +419,8 @@
           }
         },
         onModeChange: (mm)=>{
-          if(pendingEnd && mm && mm.mode === 'listening') setTimeout(hangup, 900);
+          // with an avatar, Simli's own 'silent' event decides (its audio lags slightly)
+          if(!simli && pendingEnd && mm && mm.mode === 'listening') setTimeout(hangup, 900);
         },
         onError: (e)=>{ let r=''; try{r=JSON.stringify(e)}catch(_){r=String(e)}
                          dev('ERROR: '+(e&&(e.message||e))+' :: '+r, 'dv-end'); },
@@ -409,6 +448,7 @@
   function cleanup(){
     clearInterval(clockTimer); clearInterval(injectTimer); clearTimeout(endTimer);
     conv=null; pendingEnd=false;
+    stopSimli();
     $('sdot').className='statusdot'; $('sTx').textContent='종료됨';
     $('msg').disabled=true; $('sendBtn').disabled=true;
     $('startBtn').disabled=false; $('stopBtn').disabled=true;
@@ -428,7 +468,49 @@
   $('sendBtn').onclick=send;
   $('msg').onkeydown=e=>{ if(e.key==='Enter') send(); };
   $('clearDev').onclick=()=>{ $('dev').innerHTML=''; };
-  window.__dbg = { get phase(){return phase}, get conv(){return conv}, get said(){return [...said]} };
+  // ---------- avatar (Simli) ----------
+  let simli = null;
+  function b64ToU8(b){ const s=atob(b); const u=new Uint8Array(s.length); for(let i=0;i<s.length;i++) u[i]=s.charCodeAt(i); return u; }
+
+  async function startSimli(){
+    const box=$('avBox'); box.style.display='block'; box.className=''; $('avState').textContent='아바타 연결 중…';
+    try{
+      const key=$('f_simli').value.trim();
+      const cfg={ faceId:$('f_face').value, handleSilence:true, maxSessionLength:720, maxIdleTime:180 };
+      const tok=(await Simli.generateSimliSessionToken({apiKey:key, config:cfg})).session_token;
+      const ice=await Simli.generateIceServers(key);
+      simli = new Simli.SimliClient(tok, $('av'), $('avAudio'), ice, Simli.LogLevel.ERROR, 'p2p');
+      simli.on('start', ()=>{ box.classList.add('live'); dev('◆ 아바타 연결됨 ('+$('f_face').selectedOptions[0].text+')','dv-ok'); });
+      simli.on('speaking', ()=>box.classList.add('talking'));
+      simli.on('silent', ()=>{ box.classList.remove('talking'); if(pendingEnd) setTimeout(hangup, 700); });
+      simli.on('startup_error', (m)=>{ dev('아바타 시작 실패: '+m,'dv-end'); $('avState').textContent='아바타 실패: '+m; });
+      simli.on('error', (m)=>dev('아바타 오류: '+m,'dv-end'));
+      await simli.start();
+      // Simli plays the synced voice; keep the element unmuted.
+      $('avAudio').muted=false;
+    }catch(e){
+      dev('아바타 연결 실패 — 음성만으로 진행: '+(e&&(e.message||e)),'dv-end');
+      $('avState').textContent='아바타 연결 실패';
+      simli=null;
+    }
+  }
+  function stopSimli(){
+    if(simli){ try{ simli.stop(); }catch(e){} simli=null; }
+    const box=$('avBox'); box.classList.remove('live','talking');
+  }
+
+  // Simli key: accept once via link hash (#simli=KEY), then keep it in this browser only.
+  (function(){
+    const m = location.hash.match(/simli=([^&]+)/);
+    if(m){ try{ localStorage.setItem('simli_key', decodeURIComponent(m[1])); }catch(e){}
+           history.replaceState(null,'',location.pathname+location.search); }
+    try{ const k=localStorage.getItem('simli_key'); if(k) $('f_simli').value=k; }catch(e){}
+    $('f_simli').addEventListener('input', e=>{ try{ localStorage.setItem('simli_key', e.target.value.trim()); }catch(_){} });
+    try{ const f=localStorage.getItem('simli_face'); if(f) $('f_face').value=f; }catch(e){}
+    $('f_face').addEventListener('change', e=>{ try{ localStorage.setItem('simli_face', e.target.value); }catch(_){} });
+  })();
+
+  window.__dbg = { get phase(){return phase}, get conv(){return conv}, get said(){return [...said]}, get simli(){return simli} };
 })();
 </script>
 </body>
