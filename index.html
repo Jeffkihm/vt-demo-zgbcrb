@@ -375,9 +375,24 @@
                 $('sdot').className='statusdot'; $('sTx').textContent='마이크 거부'; return; }
     }
 
-    // Avatar first, so the face is ready before the tutor's first words.
+    // Avatar and tutor connect IN PARALLEL. Tutor audio that arrives before
+    // the avatar is ready is queued and flushed the moment the face is live.
     const useAvatar = $('f_avatar').checked && !!$('f_simli').value.trim();
-    if(useAvatar){ await startSimli(); }
+    avatarMode = useAvatar; simliReady = false; avQueue = []; tBoot = performance.now(); tFirstAudio = 0;
+    if(useAvatar){
+      warmSimli().then(ok=>{
+        if(ok){
+          simliReady = true;
+          const n = avQueue.length;
+          avQueue.forEach(u=>{ try{ simli.sendAudioData(u); }catch(e){} }); avQueue = [];
+          dev('\u25c6 \uc544\ubc14\ud0c0 \uc900\ube44 \uc644\ub8cc ('+Math.round(performance.now()-tBoot)+'ms, \ub300\uae30 \uc74c\uc131 '+n+'\uc870\uac01 \uc804\ub2ec)','dv-ok');
+        } else {
+          avatarMode = false; avQueue = [];
+          if(convRef){ try{ convRef.setVolume({volume:1}); }catch(e){} }
+          dev('\uc544\ubc14\ud0c0 \uc5c6\uc774 \uc74c\uc131\ub9cc\uc73c\ub85c \uc9c4\ud589','dv-end');
+        }
+      });
+    }
     else { $('avBox').style.display='none'; }
 
     try{
@@ -385,18 +400,21 @@
         agentId: $('f_agent').value.trim(),
         textOnly,
         // Avatar needs raw 16 kHz PCM, which the websocket transport delivers.
-        connectionType: (textOnly || simli) ? 'websocket' : 'webrtc',
+        connectionType: (textOnly || avatarMode) ? 'websocket' : 'webrtc',
         dynamicVariables: v,
         // With an avatar, Simli plays the (lip-synced) voice. ElevenLabs' own
         // playback must be silenced, or the child hears every line twice.
         // onConversationCreated runs before the first audio chunk is played.
-        onConversationCreated: (c)=>{ convRef=c; if(simli){ try{ c.setVolume({volume:0}); dev('◆ ElevenLabs 자체 재생 음소거 (아바타가 재생)','dv-ok'); }catch(e){} } },
+        onConversationCreated: (c)=>{ convRef=c; if(avatarMode){ try{ c.setVolume({volume:0}); dev('◆ ElevenLabs 자체 재생 음소거 (아바타가 재생)','dv-ok'); }catch(e){} } },
         onAudio: (b64)=>{
-          if(!simli) return;
+          if(!avatarMode) return;
           if(convRef && convRef.volume !== 0){ try{ convRef.setVolume({volume:0}); }catch(e){} }
-          try{ simli.sendAudioData(b64ToU8(b64)); }catch(e){}
+          if(!tFirstAudio){ tFirstAudio = performance.now(); dev('\ud29c\ud130 \uccab \uc74c\uc131 \ub3c4\ucc29 ('+Math.round(tFirstAudio-tBoot)+'ms)'); }
+          const u = b64ToU8(b64);
+          if(simliReady && simli){ try{ simli.sendAudioData(u); }catch(e){} }
+          else avQueue.push(u);
         },
-        onInterruption: ()=>{ if(simli){ try{ simli.ClearBuffer(); }catch(e){} } },
+        onInterruption: ()=>{ avQueue = []; if(simliReady && simli){ try{ simli.ClearBuffer(); }catch(e){} } },
         onConnect: ()=>{
           phase=1; renderStage(); startClock();
           $('sdot').className='statusdot on'; $('sTx').textContent = textOnly?'연결됨 (텍스트)':'연결됨 (음성)';
@@ -430,7 +448,7 @@
         },
         onModeChange: (mm)=>{
           // with an avatar, Simli's own 'silent' event decides (its audio lags slightly)
-          if(!simli && pendingEnd && mm && mm.mode === 'listening') setTimeout(hangup, 900);
+          if(!avatarMode && pendingEnd && mm && mm.mode === 'listening') setTimeout(hangup, 900);
         },
         onError: (e)=>{ let r=''; try{r=JSON.stringify(e)}catch(_){r=String(e)}
                          dev('ERROR: '+(e&&(e.message||e))+' :: '+r, 'dv-end'); },
@@ -479,14 +497,19 @@
   $('msg').onkeydown=e=>{ if(e.key==='Enter') send(); };
   $('clearDev').onclick=()=>{ $('dev').innerHTML=''; };
   // ---------- avatar (Simli) ----------
-  let simli = null, convRef = null;
+  let simli = null, convRef = null, avatarMode = false, simliReady = false, avQueue = [], tBoot = 0, tFirstAudio = 0, simliWarmP = null;
+  // One shared connection attempt: page-load pre-warm and the start button reuse it.
+  function warmSimli(){
+    if(!simliWarmP) simliWarmP = startSimli().then(ok=>{ if(!ok) simliWarmP=null; return ok; });
+    return simliWarmP;
+  }
   function b64ToU8(b){ const s=atob(b); const u=new Uint8Array(s.length); for(let i=0;i<s.length;i++) u[i]=s.charCodeAt(i); return u; }
 
   async function startSimli(){
     const box=$('avBox'); box.style.display='block'; box.className=''; $('avState').textContent='아바타 연결 중…';
     try{
       const key=$('f_simli').value.trim();
-      const cfg={ faceId:$('f_face').value, handleSilence:true, maxSessionLength:720, maxIdleTime:180 };
+      const cfg={ faceId:$('f_face').value, handleSilence:true, maxSessionLength:720, maxIdleTime:120 };
       const tok=(await Simli.generateSimliSessionToken({apiKey:key, config:cfg})).session_token;
       const ice=await Simli.generateIceServers(key);
       simli = new Simli.SimliClient(tok, $('av'), $('avAudio'), ice, Simli.LogLevel.ERROR, 'p2p');
@@ -495,17 +518,23 @@
       simli.on('silent', ()=>{ box.classList.remove('talking'); if(pendingEnd) setTimeout(hangup, 700); });
       simli.on('startup_error', (m)=>{ dev('아바타 시작 실패: '+m,'dv-end'); $('avState').textContent='아바타 실패: '+m; });
       simli.on('error', (m)=>dev('아바타 오류: '+m,'dv-end'));
+      // Pre-warmed session closed by Simli after idling: forget it, reconnect on start.
+      simli.on('stop', ()=>{ if(!conv){ simli=null; simliReady=false; simliWarmP=null;
+        box.classList.remove('live','talking'); $('avState').textContent='대기 중 · 시작하면 다시 연결돼요'; } });
       await simli.start();
       // Simli plays the synced voice; keep the element unmuted.
       $('avAudio').muted=false;
+      return true;
     }catch(e){
       dev('아바타 연결 실패 — 음성만으로 진행: '+(e&&(e.message||e)),'dv-end');
       $('avState').textContent='아바타 연결 실패';
       simli=null;
+      return false;
     }
   }
   function stopSimli(){
     if(simli){ try{ simli.stop(); }catch(e){} simli=null; }
+    simliReady=false; avQueue=[]; tFirstAudio=0; simliWarmP=null;
     const box=$('avBox'); box.classList.remove('live','talking');
   }
 
@@ -517,7 +546,14 @@
     try{ const k=localStorage.getItem('simli_key'); if(k) $('f_simli').value=k; }catch(e){}
     $('f_simli').addEventListener('input', e=>{ try{ localStorage.setItem('simli_key', e.target.value.trim()); }catch(_){} });
     try{ const f=localStorage.getItem('simli_face'); if(f) $('f_face').value=f; }catch(e){}
-    $('f_face').addEventListener('change', e=>{ try{ localStorage.setItem('simli_face', e.target.value); }catch(_){} });
+    $('f_face').addEventListener('change', e=>{ try{ localStorage.setItem('simli_face', e.target.value); }catch(_){}
+      // re-warm with the newly chosen face if nothing is running yet
+      if(!conv && simliWarmP){ stopSimli(); if($('f_avatar').checked && $('f_simli').value.trim()) warmSimli(); } });
+    // Pre-warm the avatar as soon as the page opens, so the face is already
+    // live when the child presses start (Simli needs ~6-8 s to spin up).
+    if($('f_avatar').checked && $('f_simli').value.trim()){
+      warmSimli().then(ok=>{ if(ok) dev('◆ 아바타 미리 연결 완료 — 시작하면 바로 대화','dv-ok'); });
+    }
   })();
 
   window.__dbg = { get phase(){return phase}, get conv(){return conv}, get said(){return [...said]}, get simli(){return simli}, get convRef(){return convRef} };
