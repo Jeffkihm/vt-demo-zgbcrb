@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prep Tutor · PoC</title>
+<style>
+  :root{
+    --bg:#0d0f14; --card:#161a22; --card2:#1e2430; --line:#2a3140;
+    --tx:#eef1f6; --dim:#8b93a7; --accent:#6c5ce7; --accent2:#00cec9;
+    --ok:#00b894; --warn:#fdcb6e; --err:#ff7675;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--tx); min-height:100vh;
+    font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Apple SD Gothic Neo","Segoe UI",sans-serif;
+    display:flex; gap:14px; padding:14px; align-items:stretch;
+  }
+  .col{display:flex; flex-direction:column; gap:12px}
+  #left{width:300px; flex-shrink:0}
+  #center{flex:1; min-width:380px}
+  #right{width:340px; flex-shrink:0}
+  .panel{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:14px; display:flex; flex-direction:column; gap:10px;
+  }
+  .panel h2{
+    margin:0; font-size:11px; font-weight:700; color:var(--dim);
+    letter-spacing:.8px; text-transform:uppercase;
+  }
+  label{font-size:10.5px; color:var(--dim); display:block; margin-bottom:3px}
+  input,select,textarea{
+    width:100%; background:var(--bg); border:1px solid var(--line); color:var(--tx);
+    padding:7px 9px; border-radius:7px; font-size:12px; font-family:inherit; outline:none;
+  }
+  input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+  textarea{resize:vertical; min-height:44px}
+  .row{display:flex; gap:8px}
+  .row>div{flex:1}
+  button{
+    font-family:inherit; cursor:pointer; border:0; border-radius:9px;
+    padding:10px 12px; font-size:12.5px; font-weight:600; transition:.15s;
+  }
+  .primary{background:var(--accent); color:#fff}
+  .primary:hover{filter:brightness(1.12)}
+  .ghost{background:var(--card2); color:var(--tx); border:1px solid var(--line)}
+  .danger{background:#3d2229; color:var(--err); border:1px solid #5a2b35}
+  button:disabled{opacity:.35; cursor:not-allowed}
+
+  /* stage */
+  #stage{
+    flex:1; border-radius:18px; border:1px solid var(--line);
+    background:linear-gradient(160deg,#171c26,#10131a);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:26px; gap:16px; position:relative; overflow:hidden; min-height:340px;
+  }
+  #phaseTag{
+    position:absolute; top:14px; left:16px; font-size:10.5px; letter-spacing:.6px;
+    color:var(--dim); background:rgba(0,0,0,.35); padding:5px 10px; border-radius:20px;
+    border:1px solid var(--line);
+  }
+  #clock{
+    position:absolute; top:14px; right:16px; font-size:12px; font-variant-numeric:tabular-nums;
+    color:var(--dim); background:rgba(0,0,0,.35); padding:5px 11px; border-radius:20px;
+    border:1px solid var(--line);
+  }
+  #clock.floor{color:var(--warn); border-color:#4a3c1c}
+  #clock.target{color:var(--ok); border-color:#1c4a3a}
+  #clock.ceil{color:var(--err); border-color:#5a2b35}
+  .big{font-size:40px; margin:0; text-align:center}
+  .sub{color:var(--dim); font-size:13px; text-align:center; margin:0}
+
+  .cards{display:flex; flex-wrap:wrap; gap:10px; justify-content:center; max-width:560px}
+  .wcard{
+    background:var(--card2); border:1.5px solid var(--line); border-radius:13px;
+    padding:13px 18px; font-size:19px; font-weight:600; transition:.25s;
+    display:flex; align-items:center; gap:8px;
+  }
+  .wcard.active{border-color:var(--accent2); background:#123037; transform:translateY(-3px)}
+  .wcard.done{border-color:var(--ok); color:var(--ok)}
+  .wcard .tick{font-size:14px; opacity:0}
+  .wcard.done .tick{opacity:1}
+  .sentence{
+    background:var(--card2); border:1.5px solid var(--accent2); border-radius:14px;
+    padding:22px 26px; font-size:24px; font-weight:600; text-align:center; max-width:560px;
+  }
+
+  /* transcript */
+  #log{flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:7px; padding-right:4px}
+  #log::-webkit-scrollbar,#dev::-webkit-scrollbar{width:5px}
+  #log::-webkit-scrollbar-thumb,#dev::-webkit-scrollbar-thumb{background:#2f3646;border-radius:3px}
+  .msg{max-width:88%; padding:8px 11px; border-radius:12px; font-size:12.5px; line-height:1.5}
+  .msg.ai{background:var(--card2); align-self:flex-start; border-bottom-left-radius:4px}
+  .msg.user{background:#2c3446; align-self:flex-end; border-bottom-right-radius:4px}
+  #dev{
+    flex:1; overflow-y:auto; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:10.5px; line-height:1.65; color:var(--dim); white-space:pre-wrap;
+  }
+  .dv-trig{color:var(--accent2)}
+  .dv-time{color:var(--warn)}
+  .dv-end{color:var(--err)}
+  .dv-ok{color:var(--ok)}
+  .composer{display:flex; gap:7px}
+  .composer input{flex:1}
+  .statusdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#555;margin-right:6px}
+  .statusdot.on{background:var(--ok)}
+  .statusdot.conn{background:var(--warn)}
+</style>
+</head>
+<body>
+
+<div class="col" id="left">
+  <div class="panel" style="flex:1">
+    <h2>학생 정보 (Dynamic Variables)</h2>
+    <div><label>student_name</label><input id="f_student_name" value="Minji"></div>
+    <div class="row">
+      <div><label>level</label>
+        <select id="f_level"><option>Nest</option><option selected>Wings</option><option>Sky</option></select>
+      </div>
+      <div><label>session_type</label>
+        <select id="f_session_type"><option selected>returning</option><option>new</option></select>
+      </div>
+    </div>
+    <div><label>topic</label><input id="f_topic" value="sleep"></div>
+    <div><label>vocab_words (★=우선)</label><textarea id="f_vocab_words">★energy, rest, healthy, tired, dream, pillow</textarea></div>
+    <div><label>key_expressions</label><textarea id="f_key_expressions">Sleep makes you healthy.</textarea></div>
+    <div><label>handoff_sentence</label><input id="f_handoff_sentence" value="Sleep makes you healthy!"></div>
+    <div><label>tutor_name</label><input id="f_tutor_name" value="Emma"></div>
+    <div style="border-top:1px solid var(--line); padding-top:10px">
+      <label>Agent ID</label><input id="f_agent" value="agent_2101m36d5k20fdk8vbm5843xgh1f">
+    </div>
+    <label style="display:flex;align-items:center;gap:7px;color:var(--tx);font-size:12px;margin:0">
+      <input type="checkbox" id="f_textonly" style="width:auto"> 텍스트 모드 (마이크 없이 테스트)
+    </label>
+    <button class="primary" id="startBtn">세션 시작</button>
+    <button class="danger" id="stopBtn" disabled>강제 종료</button>
+  </div>
+</div>
+
+<div class="col" id="center">
+  <div id="stage">
+    <div id="phaseTag">PHASE 0 · 대기</div>
+    <div id="clock">00:00</div>
+    <div id="stageBody">
+      <h1 class="big">🎧</h1>
+      <p class="sub">왼쪽에서 학생 정보를 넣고 세션을 시작하세요.</p>
+    </div>
+  </div>
+  <div class="panel" style="height:230px">
+    <h2><span class="statusdot" id="sdot"></span><span id="sTx">연결 대기</span></h2>
+    <div id="log"></div>
+    <div class="composer">
+      <input id="msg" placeholder="학생 발화 입력 (텍스트 모드 테스트용)…" disabled>
+      <button class="ghost" id="sendBtn" disabled>전송</button>
+    </div>
+  </div>
+</div>
+
+<div class="col" id="right">
+  <div class="panel" style="flex:1">
+    <h2>검증 로그</h2>
+    <div id="dev"></div>
+    <button class="ghost" id="clearDev">로그 지우기</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/@elevenlabs/client@1.25.0/dist/lib.iife.js"></script>
+<script>
+(function(){
+  const { Conversation } = window.ElevenLabsClient;
+  const $ = i => document.getElementById(i);
+
+  // ---- trigger phrases (must match the system prompt verbatim) ----
+  const TRIGGERS = [
+    { phase:2, name:'WORDS',    text:"let's learn today's words!" },
+    { phase:3, name:'SENTENCE', text:"now let's practice sentences." },
+    { phase:4, name:'TALK',     text:"let's chat a little." },
+    { phase:5, name:'GOODBYE',  text:"let's wrap up." },
+  ];
+
+  let conv=null, phase=0, t0=0, clockTimer=null, injectTimer=null,
+      lastInjectedMin=-1, vocab=[], said=new Set(), agentTurns=0,
+      pendingEnd=false, endTimer=null, textOnly=false,
+      dial=4, wordCueSent=false;
+
+  const DIAL = { Nest:3, Wings:4, Sky:6 };
+
+  // The app - not the model - decides when the call hangs up.
+  const GOODBYE = /bye-?bye/i;
+  function armHangup(){
+    if(pendingEnd) return;
+    pendingEnd = true;
+    dev('◆ 굿바이 감지 → 통화 종료 예약', 'dv-trig');
+    clearTimeout(endTimer);
+    endTimer = setTimeout(hangup, 15000);   // hard fallback
+  }
+  async function hangup(){
+    if(!conv) return;
+    clearTimeout(endTimer);
+    dev('◆ 앱이 통화를 정상 종료함 (굿바이 완료)', 'dv-ok');
+    try{ await conv.endSession(); }catch(e){}
+    cleanup();
+  }
+
+  const norm = s => (s||'').toLowerCase().replace(/[\u2019\u2018]/g,"'").replace(/\s+/g,' ').trim();
+
+  function dev(msg, cls){
+    const d=$('dev'); const line=document.createElement('div');
+    if(cls) line.className=cls;
+    const el = t0 ? ((Date.now()-t0)/1000) : 0;
+    line.textContent = `[${String(Math.floor(el/60)).padStart(2,'0')}:${String(Math.floor(el%60)).padStart(2,'0')}] ${msg}`;
+    d.appendChild(line); d.scrollTop=d.scrollHeight;
+  }
+  function push(text, who){
+    const l=$('log'); const d=document.createElement('div');
+    d.className='msg '+who; d.textContent=text; l.appendChild(d); l.scrollTop=l.scrollHeight;
+  }
+  function vars(){
+    const o={};
+    ['student_name','level','topic','vocab_words','key_expressions','handoff_sentence','tutor_name','session_type']
+      .forEach(k => o[k] = $('f_'+k).value.trim());
+    return o;
+  }
+
+  // ---------- stage rendering ----------
+  function renderStage(){
+    const v = vars(), b = $('stageBody');
+    $('phaseTag').textContent =
+      phase===0 ? 'PHASE 0 · 대기' :
+      'PHASE '+phase+' · '+({1:'HELLO',2:'WORDS',3:'SENTENCE',4:'TALK',5:'GOODBYE'}[phase]);
+
+    if(phase===1){
+      b.innerHTML = `<h1 class="big">👋</h1><p class="sub">Hello, ${v.student_name||'there'}!</p>`;
+    } else if(phase===2){
+      b.innerHTML = `<p class="sub">오늘의 단어</p><div class="cards" id="cards"></div>`;
+      const c=$('cards');
+      vocab.forEach(w=>{
+        const el=document.createElement('div');
+        el.className='wcard'; el.dataset.w=w.toLowerCase();
+        el.innerHTML = `<span>${w}</span><span class="tick">✓</span>`;
+        c.appendChild(el);
+      });
+      paintWords();
+    } else if(phase===3){
+      b.innerHTML = `<p class="sub">오늘의 문장</p>
+        <div class="sentence">${(v.key_expressions||'').split('\n')[0]}</div>`;
+    } else if(phase===4){
+      b.innerHTML = `<h1 class="big">💬</h1><p class="sub">자유 대화 · ${v.topic}</p>`;
+    } else if(phase===5){
+      b.innerHTML = `<h1 class="big">🎉</h1><p class="sub">선생님께 이렇게 말해보세요</p>
+        <div class="sentence">${v.handoff_sentence||'I did a great job!'}</div>`;
+    }
+  }
+  function paintWords(){
+    document.querySelectorAll('.wcard').forEach(el=>{
+      el.classList.toggle('done', said.has(el.dataset.w));
+    });
+  }
+  function markWords(studentText){
+    if(phase!==2) return;
+    const t = norm(studentText);
+    let changed=false;
+    vocab.forEach(w=>{
+      const lw=w.toLowerCase();
+      if(!said.has(lw) && new RegExp('\\b'+lw.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b').test(t)){
+        said.add(lw); changed=true; dev(`단어 확인: "${w}" (${said.size}/${vocab.length})`, 'dv-ok');
+      }
+    });
+    if(changed) paintWords();
+
+    // App enforces the EXACT word dial instead of trusting the model to count.
+    if(!wordCueSent && said.size >= dial && conv){
+      wordCueSent = true;
+      const cue = 'STATE: the student has now said ' + dial + ' words out loud. That is the EXACT target '
+                + 'for this level. Stop introducing new words immediately. Your very next utterance must '
+                + 'move to the sentence phase, beginning with the verbatim sentence trigger.';
+      try{ conv.sendContextualUpdate(cue); dev('→ 단어 달성 지시 주입 ('+dial+'개)', 'dv-time'); }catch(e){}
+    }
+  }
+  function highlightSpoken(agentText){
+    if(phase!==2) return;
+    const t=norm(agentText);
+    let best=null;
+    vocab.forEach(w=>{ if(t.includes("'"+w.toLowerCase()+"'")) best=w.toLowerCase(); });
+    document.querySelectorAll('.wcard').forEach(el=>el.classList.toggle('active', best && el.dataset.w===best));
+  }
+
+  // ---------- clock + elapsed injection ----------
+  function startClock(){
+    t0 = Date.now();
+    clockTimer = setInterval(()=>{
+      const s = Math.floor((Date.now()-t0)/1000);
+      const c = $('clock');
+      c.textContent = `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+      c.className = s>=480 ? 'ceil' : s>=420 ? 'target' : s>=300 ? 'floor' : '';
+    }, 500);
+
+    // The app is the conductor: it does not just report the clock,
+    // it issues an explicit directive for the current time window.
+    const inject = () => {
+      if(!conv) return;
+      const secs = Math.floor((Date.now()-t0)/1000);
+      const mins = Math.floor(secs/60);
+
+      if(secs >= 600){                            // hard ceiling: app pulls the plug
+        dev('◆ 10분 초과 — 앱이 강제 종료', 'dv-end');
+        hangup(); return;
+      }
+      if(mins === lastInjectedMin) return;         // once per whole minute
+      lastInjectedMin = mins;
+
+      let line;
+      if(mins < 7){
+        line = 'CONTINUE: the session is not over. Do NOT wrap up, do NOT say the hand-off line, '
+             + 'do NOT say goodbye. Stay in Phase 4 and end your next turn with a NEW question '
+             + 'about the topic.';
+      } else {
+        line = 'WRAP NOW';
+      }
+      try { conv.sendContextualUpdate(line); dev('\u2192 ' + (mins<7 ? '\uacc4\uc18d \uc9c0\uc2dc ['+mins+'\ubd84]' : '\u25c6 WRAP NOW \uc804\uc1a1 ['+mins+'\ubd84]'), mins<7?'dv-time':'dv-trig'); }
+      catch(e){ dev('\uc8fc\uc785 \uc2e4\ud328: '+e.message, 'dv-end'); }
+    };
+    inject();
+    injectTimer = setInterval(inject, 3000);
+  }
+
+  // ---------- session ----------
+  async function start(){
+    const v = vars();
+    vocab = (v.vocab_words||'').split(',').map(s=>s.replace(/★/g,'').trim()).filter(Boolean);
+    said = new Set(); agentTurns = 0; lastInjectedMin = -1;
+    dial = DIAL[v.level] || 3; wordCueSent = false;
+    $('log').innerHTML=''; $('dev').innerHTML='';
+    dev('세션 시작 · 후보단어 '+vocab.length+'개 · level='+v.level+' → 목표 '+dial+'개');
+
+    textOnly = $('f_textonly').checked;
+    pendingEnd=false; clearTimeout(endTimer);
+    $('sdot').className='statusdot conn'; $('sTx').textContent='연결 중';
+
+    if(!textOnly){
+      try { await navigator.mediaDevices.getUserMedia({audio:true}); }
+      catch(e){ dev('마이크 거부됨 — 텍스트 모드로 시도하세요', 'dv-end');
+                $('sdot').className='statusdot'; $('sTx').textContent='마이크 거부'; return; }
+    }
+
+    try{
+      conv = await Conversation.startSession({
+        agentId: $('f_agent').value.trim(),
+        textOnly,
+        connectionType: textOnly ? 'websocket' : 'webrtc',
+        dynamicVariables: v,
+        onConnect: ()=>{
+          phase=1; renderStage(); startClock();
+          $('sdot').className='statusdot on'; $('sTx').textContent = textOnly?'연결됨 (텍스트)':'연결됨 (음성)';
+          $('msg').disabled=false; $('sendBtn').disabled=false;
+          $('startBtn').disabled=true; $('stopBtn').disabled=false;
+          dev('연결 완료 · 변수 '+Object.keys(v).length+'개 주입', 'dv-ok');
+        },
+        onDisconnect: (d)=>{
+          let raw=''; try{ raw=JSON.stringify(d); }catch(e){ raw=String(d); }
+          dev('RAW disconnect: '+raw, 'dv-end');
+          const reason = d && (d.reason || (d.context && d.context.type)) || 'unknown';
+          if(d&&d.context&&d.context.type==='end_call')
+            dev('◆ 에이전트가 end_call로 통화 종료', 'dv-end');
+          else dev('연결 종료 (reason='+reason+')', 'dv-end');
+          cleanup();
+        },
+        onMessage: (m)=>{
+          if(!m || !m.message) return;
+          if(m.source==='user'){ push(m.message,'user'); markWords(m.message); return; }
+          agentTurns++;
+          push(m.message,'ai');
+          checkTriggers(m.message);
+          highlightSpoken(m.message);
+          // Hang up on the goodbye cue in ANY phase. If the model skipped the
+          // wrap-up trigger, the call must still terminate cleanly.
+          if(GOODBYE.test(m.message)){
+            if(phase!==5){ phase=5; renderStage(); dev('◆ 트리거 없이 굿바이 발생 — PHASE 5로 강제 전환', 'dv-trig'); }
+            if(textOnly) setTimeout(hangup, 1200);
+            else armHangup();
+          }
+        },
+        onModeChange: (mm)=>{
+          if(pendingEnd && mm && mm.mode === 'listening') setTimeout(hangup, 900);
+        },
+        onError: (e)=>{ let r=''; try{r=JSON.stringify(e)}catch(_){r=String(e)}
+                         dev('ERROR: '+(e&&(e.message||e))+' :: '+r, 'dv-end'); },
+        onDebug: (x)=>{ try{ const s=JSON.stringify(x);
+                        if(/error|disconnect|end_call|interruption|guardrail/i.test(s)) dev('DBG '+s.slice(0,300)); }catch(e){} }
+      });
+    }catch(e){
+      dev('연결 실패: '+(e&&(e.message||e)), 'dv-end');
+      $('sdot').className='statusdot'; $('sTx').textContent='실패';
+    }
+  }
+
+  function checkTriggers(text){
+    const t = norm(text);
+    for(const tr of TRIGGERS){
+      if(t.includes(tr.text)){
+        if(tr.phase !== phase){
+          phase = tr.phase; renderStage();
+          dev(`◆ 트리거 감지 → PHASE ${tr.phase} (${tr.name})`, 'dv-trig');
+        }
+      }
+    }
+  }
+
+  function cleanup(){
+    clearInterval(clockTimer); clearInterval(injectTimer); clearTimeout(endTimer);
+    conv=null; pendingEnd=false;
+    $('sdot').className='statusdot'; $('sTx').textContent='종료됨';
+    $('msg').disabled=true; $('sendBtn').disabled=true;
+    $('startBtn').disabled=false; $('stopBtn').disabled=true;
+    dev(`세션 요약 · 에이전트 턴 ${agentTurns} · 단어 ${said.size}/${vocab.length} · 최종 PHASE ${phase}`);
+  }
+
+  $('startBtn').onclick = start;
+  $('stopBtn').onclick = async ()=>{ if(conv){ try{ await conv.endSession(); }catch(e){} } cleanup(); };
+  function send(){
+    const t=$('msg').value.trim(); if(!t||!conv) return;
+    try{
+      conv.sendUserMessage(t);
+      push(t,'user'); markWords(t);      // text mode does not echo user turns back
+      $('msg').value='';
+    }catch(e){ dev('전송 실패: '+e.message,'dv-end'); }
+  }
+  $('sendBtn').onclick=send;
+  $('msg').onkeydown=e=>{ if(e.key==='Enter') send(); };
+  $('clearDev').onclick=()=>{ $('dev').innerHTML=''; };
+  window.__dbg = { get phase(){return phase}, get conv(){return conv}, get said(){return [...said]} };
+})();
+</script>
+</body>
+</html>
