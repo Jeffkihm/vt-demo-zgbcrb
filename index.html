@@ -385,7 +385,15 @@
         // Avatar needs raw 16 kHz PCM, which the websocket transport delivers.
         connectionType: (textOnly || simli) ? 'websocket' : 'webrtc',
         dynamicVariables: v,
-        onAudio: (b64)=>{ if(simli){ try{ simli.sendAudioData(b64ToU8(b64)); }catch(e){} } },
+        // With an avatar, Simli plays the (lip-synced) voice. ElevenLabs' own
+        // playback must be silenced, or the child hears every line twice.
+        // onConversationCreated runs before the first audio chunk is played.
+        onConversationCreated: (c)=>{ convRef=c; if(simli){ try{ c.setVolume({volume:0}); dev('◆ ElevenLabs 자체 재생 음소거 (아바타가 재생)','dv-ok'); }catch(e){} } },
+        onAudio: (b64)=>{
+          if(!simli) return;
+          if(convRef && convRef.volume !== 0){ try{ convRef.setVolume({volume:0}); }catch(e){} }
+          try{ simli.sendAudioData(b64ToU8(b64)); }catch(e){}
+        },
         onInterruption: ()=>{ if(simli){ try{ simli.ClearBuffer(); }catch(e){} } },
         onConnect: ()=>{
           phase=1; renderStage(); startClock();
@@ -469,7 +477,7 @@
   $('msg').onkeydown=e=>{ if(e.key==='Enter') send(); };
   $('clearDev').onclick=()=>{ $('dev').innerHTML=''; };
   // ---------- avatar (Simli) ----------
-  let simli = null;
+  let simli = null, convRef = null;
   function b64ToU8(b){ const s=atob(b); const u=new Uint8Array(s.length); for(let i=0;i<s.length;i++) u[i]=s.charCodeAt(i); return u; }
 
   async function startSimli(){
@@ -510,7 +518,7 @@
     $('f_face').addEventListener('change', e=>{ try{ localStorage.setItem('simli_face', e.target.value); }catch(_){} });
   })();
 
-  window.__dbg = { get phase(){return phase}, get conv(){return conv}, get said(){return [...said]}, get simli(){return simli} };
+  window.__dbg = { get phase(){return phase}, get conv(){return conv}, get said(){return [...said]}, get simli(){return simli}, get convRef(){return convRef} };
 })();
 </script>
 </body>
