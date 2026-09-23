@@ -340,10 +340,12 @@
       lastInjectedMin = mins;
 
       let line;
-      if(mins < 7){
-        line = 'CONTINUE: the session is not over. Do NOT wrap up, do NOT say the hand-off line, '
-             + 'do NOT say goodbye. Stay in Phase 4 and end your next turn with a NEW question '
-             + 'about the topic.';
+      if(mins < 5){
+        line = 'CONTINUE: the session is not over yet. First answer anything the student just asked you, '
+             + 'then keep a real conversation going and end your turn with one question.';
+      } else if(mins < 7){
+        line = 'CONTINUE + SOFT EXIT ALLOWED: keep the conversation going. First answer anything the student '
+             + 'just asked you. If the student clearly wants to stop, you may start the goodbye now.';
       } else {
         line = 'WRAP NOW';
       }
